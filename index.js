@@ -1,3 +1,8 @@
+// 此文件已迁移到 Next.js 框架
+// 原有的 Express 应用现在已被 Next.js API Routes 替代
+// 请使用 `pnpm dev` 启动开发服务器
+// 或使用 `pnpm build && pnpm start` 启动生产服务器
+
 import OpenAI from 'openai';
 import express from 'express';
 import cors from 'cors';
