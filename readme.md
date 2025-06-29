@@ -1,155 +1,165 @@
-# 🚀 Gemini OpenAI 代理服务
+# Gemini Proxy for 阿里云函数计算
 
-使用 Google 官方 OpenAI 兼容端点的 Gemini 代理服务，基于 Next.js 框架构建。
+这是一个运行在阿里云函数计算上的 Gemini API 代理，使用客户端调用格式。用于解决中国无法直接调用gemini 的问题。
 
-## ✨ 特性
 
-- 🔥 基于 Next.js 框架，支持 API Routes
-- 🌐 完全兼容 OpenAI API 格式
-- 📡 支持流式和非流式响应
-- 🚀 支持最新的 Gemini 模型（2.5-flash, 2.5-pro, 2.0-flash 等）
-- ☁️ 支持无服务器部署（Vercel、阿里云函数计算等）
-- 🛡️ 内置 CORS 支持
+## 部署到阿里云函数计算
 
-## 🔧 环境要求
+1. **创建函数**：
+   - 运行时：`Node.js 20` 或更高版本
+   - 内存规格：建议 256MB 或以上
+   - 超时时间：建议 120 秒
 
-- Node.js 18+
-- pnpm（推荐）或 npm
+2. **上传代码文件**：
+   - 复制 `index.mjs` 内容
+   - 创建 `package.json` 文件并复制内容
 
-## 📦 安装
+3. **安装依赖**：
+   在函数计算控制台的终端中运行：
+   ```bash
+   npm install
+   ```
 
-```bash
-# 安装依赖
-pnpm install
+4. **配置环境变量**
 
-# 或使用 npm
-npm install
+在阿里云函数计算控制台中设置以下环境变量：
+
 ```
-
-## ⚙️ 环境变量
-
-创建 `.env.local` 文件并设置以下环境变量：
-
-```bash
-# Google Gemini API 密钥（必需）
 GEMINI_API_KEY=your_gemini_api_key_here
+AUTH_TOKEN=Bearer_token
+```
+GEMINI_API_KEY ，获取 Gemini API Key：
+1. 访问 [Google AI Studio](https://makersuite.google.com/app/apikey)
+2. 创建新的 API Key
+3. 将 API Key 添加到函数计算环境变量
+AUTH_TOKEN 自定义的校验 token，防止他人调用
 
-# 端口号（可选，默认为 3000）
-PORT=3000
+
+## API 端点
+
+### 1. 聊天完成 (Chat Completions)
+
+**端点**: `POST /v1/chat/completions`
+
+**请求格式**:
+```json
+{
+  "model": "gemini-2.5-flash",
+  "messages": [
+    {
+      "role": "user",
+      "content": "你好，请介绍一下自己"
+    }
+  ],
+  "temperature": 0.7,
+  "max_tokens": 1000
+}
 ```
 
-## 🚀 启动服务
-
-### 开发模式
-```bash
-pnpm dev
+**响应格式**:
+```json
+{
+  "id": "chatcmpl-1234567890",
+  "object": "chat.completion",
+  "created": 1234567890,
+  "model": "gemini-2.5-flash",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "你好！我是 Gemini..."
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 0,
+    "completion_tokens": 0,
+    "total_tokens": 0
+  }
+}
 ```
 
-### 生产模式
-```bash
-# 构建项目
-pnpm build
+### 2. 模型列表 (Models)
 
-# 启动生产服务器
-pnpm start
+**端点**: `POST /v1/models`
+
+**响应格式**:
+```json
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "gemini-1.5-flash",
+      "object": "model",
+      "created": 1234567890,
+      "owned_by": "google"
+    }
+  ]
+}
 ```
 
-## 📡 API 端点
+## 使用示例
 
-### 健康检查
-```
-GET /api/health
-```
+### 使用 OpenAI Python 客户端
 
-### 模型列表
-```
-GET /api/v1/models
-```
+```python
+from openai import OpenAI
 
-### 聊天完成
-```
-POST /api/v1/chat/completions
-```
+# 替换为你的函数计算 HTTP 触发器 URL
+client = OpenAI(
+    api_key="dummy",  # Gemini API Key 通过环境变量设置
+    base_url="https://your-fc-domain.com"
+)
 
-## 🤖 支持的模型
-
-- `gemini-2.5-flash`
-- `gemini-2.5-pro`
-- `gemini-2.0-flash`
-- `gemini-1.5-pro`
-- `gemini-1.5-flash`
-- `gemini-1.5-pro-vision`
-- `gemini-pro`
-- `gemini-pro-vision`
-
-## 📖 使用示例
-
-### 非流式请求
-```bash
-curl -X POST http://localhost:3000/api/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "gemini-2.5-flash",
-    "messages": [
-      {"role": "user", "content": "你好！"}
+response = client.chat.completions.create(
+    model="gemini-1.5-flash",
+    messages=[
+        {"role": "user", "content": "你好，请介绍一下自己"}
     ]
-  }'
+)
+
+print(response.choices[0].message.content)
 ```
 
-### 流式请求
+### 使用 curl
+
 ```bash
-curl -X POST http://localhost:3000/api/v1/chat/completions \
+curl -X POST "https://your-fc-domain.com/v1/chat/completions" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "gemini-2.5-flash",
+    "model": "gemini-1.5-flash",
     "messages": [
-      {"role": "user", "content": "你好！"}
+      {
+        "role": "user", 
+        "content": "你好，请介绍一下自己"
+      }
     ],
-    "stream": true
+    "temperature": 0.7
   }'
 ```
 
-## 🚀 部署
+### 使用 JavaScript/Node.js
 
-### Vercel 部署
-1. 将项目推送到 GitHub
-2. 在 Vercel 中导入项目
-3. 设置环境变量 `GEMINI_API_KEY`
-4. 部署完成
+```javascript
+import OpenAI from 'openai';
 
-### 其他平台
-本项目包含 `lib/serverless.js` 文件，可以适配阿里云函数计算等无服务器平台。
+const openai = new OpenAI({
+  apiKey: 'dummy', // Gemini API Key 通过环境变量设置
+  baseURL: 'https://your-fc-domain.com'
+});
 
-## 📝 项目结构
+async function main() {
+  const completion = await openai.chat.completions.create({
+    messages: [{ role: 'user', content: '你好，请介绍一下自己' }],
+    model: 'gemini-1.5-flash',
+  });
 
-```
-gemini-proxy/
-├── lib/
-│   ├── constants.js      # 常量定义
-│   ├── openai.js        # OpenAI 客户端初始化
-│   └── serverless.js    # 无服务器适配器
-├── pages/
-│   ├── api/
-│   │   ├── health.js           # 健康检查端点
-│   │   └── v1/
-│   │       ├── models.js       # 模型列表端点
-│   │       └── chat/
-│   │           └── completions.js  # 聊天完成端点
-│   └── index.js         # 主页
-├── next.config.js       # Next.js 配置
-└── package.json         # 依赖配置
+  console.log(completion.choices[0].message.content);
+}
+
+main();
 ```
 
-## 🔄 从 Express 迁移
 
-原有的 Express 应用已迁移到 Next.js API Routes：
-
-- `/health` → `/api/health`
-- `/v1/models` → `/api/v1/models`
-- `/v1/chat/completions` → `/api/v1/chat/completions`
-
-所有功能保持兼容，包括流式响应和错误处理。
-
-## 📄 许可证
-
-MIT License

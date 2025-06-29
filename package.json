@@ -1,34 +1,27 @@
 {
-  "name": "gemini-proxy",
+  "name": "gemini-proxy-fc",
   "version": "1.0.0",
-  "description": "使用 Google 官方 OpenAI 兼容端点的 Gemini 代理，部署在腾讯云的edgeone上",
-  "main": "index.js",
+  "description": "阿里云函数计算的 Gemini API 代理，兼容 OpenAI 客户端调用格式",
+  "main": "index.mjs",
   "type": "module",
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
-    "export": "next export",
-    "test": "node test.js"
+    "test": "node test.js",
+    "start": "node index.mjs"
   },
   "keywords": [
     "gemini",
-    "nextjs",
     "openai",
-    "proxy"
+    "proxy",
+    "aliyun",
+    "function-compute",
+    "serverless"
   ],
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "next": "latest",
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0",
-    "openai": "^4.28.0",
-    "cors": "^2.8.5",
-    "dotenv": "^16.3.1",
-    "axios": "^1.6.0"
+    "openai": "^4.63.0"
   },
-  "devDependencies": {
-    "@types/cors": "^2.8.17"
+  "engines": {
+    "node": ">=18.0.0"
   }
 } 
