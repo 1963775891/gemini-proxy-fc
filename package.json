@@ -1,0 +1,25 @@
+{
+  "name": "gemini-proxy",
+  "version": "1.0.0",
+  "description": "使用 Google 官方 OpenAI 兼容端点的 Gemini 代理，部署在腾讯云的edgeone上",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "dev": "node index.js",
+    "test": "node test.js",
+    "start": "node index.js"
+  },
+  "keywords": [
+    "gemini"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "openai": "^4.28.0",
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "axios": "^1.6.0"
+  },
+  "devDependencies": {}
+} 
