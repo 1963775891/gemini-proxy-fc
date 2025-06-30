@@ -81,7 +81,7 @@ function formatSSEData(data) {
 }
 
 // 调用 Gemini API（支持流式响应）
-async function callGeminiAPI(model, messages, temperature = 0.7, maxTokens = 1000, stream = false) {
+async function callGeminiAPI(model, messages, temperature = 0.7, maxTokens = 8000, stream = false) {
   const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
   
   console.log(`[DEBUG] callGeminiAPI 参数:`);
@@ -174,7 +174,7 @@ async function handleChatCompletions(body) {
       model = 'gemini-2.0-flash',
       messages = [],
       temperature = 0.7,
-      max_tokens = 1000,
+      max_tokens = 8000,
       stream = false
     } = requestData;
 

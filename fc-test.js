@@ -3,9 +3,9 @@ import OpenAI from 'openai';
 
 // 测试配置
 const CONFIG = {
-  baseURL: 'https://xx.ap-southeast-1.fcapp.run',
+  baseURL: 'https://gemini-proxy-zfzvoecwuc.ap-southeast-1.fcapp.run',
   // 请替换为你的实际 AUTH_TOKEN
-  authToken: process.env.AUTH_TOKEN || '',
+  authToken: process.env.AUTH_TOKEN || 'sk-1234567890abcdef',
   timeout: 30000 // 30秒超时
 };
 
