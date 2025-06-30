@@ -5,7 +5,8 @@
   "main": "index.mjs",
   "type": "module",
   "scripts": {
-    "start": "node index.mjs"
+    "start": "node index.mjs",
+    "test": "node fc-test.js"
   },
   "keywords": [
     "gemini",
@@ -19,6 +20,10 @@
   "license": "MIT",
   "dependencies": {
     "openai": "^4.63.0"
+  },
+  "devDependencies": {
+    "colors": "^1.4.0",
+    "node-fetch": "^3.3.2"
   },
   "engines": {
     "node": ">=20.0.0"

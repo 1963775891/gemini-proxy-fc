@@ -100,7 +100,6 @@ async function callGeminiAPI(model, messages, temperature = 0.7, maxTokens = 100
   try {
     // 创建 OpenAI 客户端，使用 Google 的 OpenAI 兼容端点
     const baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai/';
-    console.log(`[DEBUG] 创建 OpenAI 客户端，baseURL: ${baseURL}`);
     
     const openai = new OpenAI({
       apiKey: GEMINI_API_KEY,
@@ -119,15 +118,13 @@ async function callGeminiAPI(model, messages, temperature = 0.7, maxTokens = 100
       stream: stream
     };
     
-    console.log(`[DEBUG] API 请求参数:`, JSON.stringify(requestParams, null, 2));
-    
     const startTime = Date.now();
     
     if (stream) {
       console.log(`[INFO] 开始流式调用 Gemini API`);
-      const stream = await openai.chat.completions.create(requestParams);
+      const streamResponse = await openai.chat.completions.create(requestParams);
       console.log(`[INFO] 流式调用创建成功`);
-      return stream;
+      return streamResponse;
     } else {
       const completion = await openai.chat.completions.create(requestParams);
       const endTime = Date.now();
@@ -396,40 +393,73 @@ export const handler = async (event, context) => {
       };
     }
 
-    console.log(`[DEBUG] 开始身份验证检查`);
-    const authResult = verifyAuthorization(headers);
+    // 身份验证（仅对需要认证的路径）
+    const requiresAuth = path !== '/health' && path !== '/';
     
-    if (!authResult.authorized) {
-    console.log(`[ERROR] 身份验证失败`);
-    return {
-        statusCode: authResult.error.statusCode,
-        headers: {
-        'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*'
-        },
-        body: JSON.stringify({
-        error: {
-            message: authResult.error.message,
-            type: 'unauthorized',
-            code: authResult.error.code
-        }
-        })
-    };
+    if (requiresAuth) {
+      console.log(`[DEBUG] 开始身份验证检查`);
+      const authResult = verifyAuthorization(headers);
+      
+      if (!authResult.authorized) {
+        console.log(`[ERROR] 身份验证失败`);
+        return {
+          statusCode: authResult.error.statusCode,
+          headers: {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*'
+          },
+          body: JSON.stringify({
+            error: {
+              message: authResult.error.message,
+              type: 'unauthorized',
+              code: authResult.error.code
+            }
+          })
+        };
+      }
     }
 
     let response;
-    // 路由处理
-    if (path === '/v1/chat/completions' && method === 'POST') {
-        response = await handleChatCompletions(body);
-    } else if(path === '/v1/models' && method === 'POST'){
-        response =  handleModels();
-    }else {
-        response = handleHealth();
+    // 支持带 /v1 前缀和不带前缀的路径，兼容 OpenAI 客户端
+    const isModelsPath = (path === '/v1/models' || path === '/models') && method === 'GET';  
+    const isChatCompletionsPath = (path === '/v1/chat/completions' || path === '/chat/completions') && method === 'POST';
+    
+    if (isChatCompletionsPath) {
+      console.log(`[INFO] 路由匹配: 聊天完成接口 (${path})`);
+      response = await handleChatCompletions(body);
+    } else if (isModelsPath) {
+      console.log(`[INFO] 路由匹配: 模型列表接口 (${path})`);
+      response = handleModels();
+    } else if (path === '/health' && method === 'GET') {
+      console.log(`[INFO] 路由匹配: 健康检查接口`);
+      response = handleHealth();
+    } else if (path === '/' && method === 'GET') {
+      console.log(`[INFO] 路由匹配: 根路径，返回健康检查`);
+      response = handleHealth();
+    } else {
+      console.log(`[WARN] 路由未匹配: ${method} ${path}`);
+      response = {
+        statusCode: 404,
+        headers: {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*'
+        },
+        body: JSON.stringify({
+          error: {
+            message: `路径 ${path} 不存在`,
+            type: 'not_found',
+            code: 'path_not_found'
+          }
+        })
+      };
     }
+    
     const endTime = Date.now();
     console.log(`[INFO] 请求处理完成，耗时: ${endTime - startTime}ms, 状态码: ${response.statusCode}`);
     console.log(`[INFO] === 请求 ${requestId} 处理结束 ===`);
+    
     return response;
+    
   } catch (error) {
     const endTime = Date.now();
     console.error(`[ERROR] 处理请求失败，耗时: ${endTime - startTime}ms:`, error);

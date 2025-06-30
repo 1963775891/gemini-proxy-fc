@@ -146,20 +146,79 @@ curl -X POST "https://your-fc-domain.com/v1/chat/completions" \
 import OpenAI from 'openai';
 
 const openai = new OpenAI({
-  apiKey: 'dummy', // Gemini API Key 通过环境变量设置
-  baseURL: 'https://your-fc-domain.com'
+  apiKey: 'your_auth_token_here',  // 使用 AUTH_TOKEN
+  baseURL: 'https://xx.fcapp.run'
 });
 
-async function main() {
-  const completion = await openai.chat.completions.create({
-    messages: [{ role: 'user', content: '你好，请介绍一下自己' }],
-    model: 'gemini-1.5-flash',
-  });
+// 聊天完成
+const response = await openai.chat.completions.create({
+  model: 'gemini-2.0-flash',
+  messages: [{ role: 'user', content: '你好' }],
+  stream: false
+});
 
-  console.log(completion.choices[0].message.content);
+console.log(response.choices[0].message.content);
+
+// 流式响应
+const stream = await openai.chat.completions.create({
+  model: 'gemini-2.0-flash',
+  messages: [{ role: 'user', content: '请写一首诗' }],
+  stream: true
+});
+
+for await (const chunk of stream) {
+  process.stdout.write(chunk.choices[0]?.delta?.content || '');
 }
 
-main();
+// 模型列表
+const models = await openai.models.list();
+console.log('支持的模型:', models.data.map(m => m.id));
 ```
 
+
+## 功能测试
+
+项目包含了一个全面的测试脚本 `fc-test.js`，用于验证线上代理服务的各项功能。
+
+### 测试脚本功能
+
+测试脚本包含 **10 个测试用例**，全面验证代理服务的功能：
+
+1. **健康检查测试** - 验证服务状态和配置信息
+2. **模型列表测试** - 验证支持的 Gemini 模型列表
+3. **聊天完成测试（非流式）** - 验证基本聊天功能
+4. **聊天完成测试（流式）** - 验证 Server-Sent Events 流式响应
+5. **OpenAI 客户端测试** - 验证与 OpenAI SDK 的兼容性
+6. **OpenAI 客户端流式测试** - 验证 OpenAI SDK 的流式调用
+7. **错误处理测试（无效认证）** - 验证身份验证机制
+8. **错误处理测试（不支持的模型）** - 验证模型验证逻辑
+9. **CORS 预检测试** - 验证跨域请求支持
+10. **性能测试** - 验证并发请求处理能力
+
+
+### 运行测试
+
+#### 1. 安装依赖
+
+```bash
+pnpm install
+```
+
+#### 2. 修改配置
+
+打开 fc-test.js，修改配置
+
+```javascript
+const CONFIG = {
+  baseURL: 'https://xx.fcapp.run',
+  authToken: process.env.AUTH_TOKEN || 'fc_config_token',
+  timeout: 30000 // 30秒超时
+};
+```
+
+#### 3. 运行测试
+
+```bash
+node fc-test.js
+```
 
