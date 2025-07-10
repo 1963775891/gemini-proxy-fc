@@ -20,21 +20,6 @@
    npm install
    ```
 
-4. **配置环境变量**
-
-在阿里云函数计算控制台中设置以下环境变量：
-
-```
-GEMINI_API_KEY=your_gemini_api_key_here
-AUTH_TOKEN=Bearer_token
-```
-GEMINI_API_KEY ，获取 Gemini API Key：
-1. 访问 [Google AI Studio](https://makersuite.google.com/app/apikey)
-2. 创建新的 API Key
-3. 将 API Key 添加到函数计算环境变量
-AUTH_TOKEN 自定义的校验 token，防止他人调用
-
-
 ## API 端点
 
 ### 1. 聊天完成 (Chat Completions)
