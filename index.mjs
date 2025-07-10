@@ -14,65 +14,30 @@ const SUPPORTED_MODELS = [
   'gemini-1.5-flash-8b'
 ];
 
-// 验证授权 token
-function verifyAuthorization(headers) {
-  const AUTH_TOKEN = process.env.AUTH_TOKEN;
-  
-  console.log(`[DEBUG] 检查授权，AUTH_TOKEN 存在: ${!!AUTH_TOKEN}`);
-  
-  // 如果没有设置 AUTH_TOKEN，跳过验证（向后兼容）
-  if (!AUTH_TOKEN) {
-    console.log(`[WARN] 未设置 AUTH_TOKEN 环境变量，跳过身份验证`);
-    return { authorized: true };
-  }
-
+// 验证并获取 API Key
+function getApiKey(headers) {
+  // 优先从 Authorization header 获取 API Key
   const authorization = headers?.Authorization || headers?.authorization;
-  console.log(`[DEBUG] 授权头存在: ${!!authorization}`);
   
-  if (!authorization) {
-    console.log(`[ERROR] 缺少 Authorization 头`);
-    return { 
-      authorized: false, 
-      error: {
-        statusCode: 401,
-        message: '缺少授权头',
-        code: 'missing_authorization'
-      }
-    };
+  if (authorization) {
+    // 检查 Bearer token 格式
+    const bearerMatch = authorization.match(/^Bearer\s+(.+)$/i);
+    if (bearerMatch) {
+      const token = bearerMatch[1];
+      console.log(`[INFO] 从 Authorization header 获取到 API Key`);
+      return token;
+    }
   }
-
-  // 检查 Bearer token 格式
-  const bearerMatch = authorization.match(/^Bearer\s+(.+)$/i);
-  if (!bearerMatch) {
-    console.log(`[ERROR] 无效的授权格式: ${authorization}`);
-    return { 
-      authorized: false, 
-      error: {
-        statusCode: 401,
-        message: '无效的授权格式，应为: Bearer <token>',
-        code: 'invalid_authorization_format'
-      }
-    };
-  }
-
-  const token = bearerMatch[1];
-  console.log(`[DEBUG] 提取的 token: ${token.substring(0, 8)}...`);
   
-  // 验证 token
-  if (token !== AUTH_TOKEN) {
-    console.log(`[ERROR] 无效的授权 token`);
-    return { 
-      authorized: false, 
-      error: {
-        statusCode: 401,
-        message: '无效的授权 token',
-        code: 'invalid_token'
-      }
-    };
+  // 如果没有从 header 获取到，尝试从环境变量获取（兼容性）
+  const envApiKey = process.env.GEMINI_API_KEY;
+  if (envApiKey) {
+    console.log(`[INFO] 从环境变量获取到 API Key`);
+    return envApiKey;
   }
-
-  console.log(`[INFO] 授权验证成功`);
-  return { authorized: true };
+  
+  console.log(`[ERROR] 未找到有效的 API Key`);
+  return null;
 }
 
 // 格式化 SSE 数据
@@ -81,20 +46,18 @@ function formatSSEData(data) {
 }
 
 // 调用 Gemini API（支持流式响应）
-async function callGeminiAPI(model, messages, temperature = 0.7, maxTokens = 8000, stream = false) {
-  const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-  
+async function callGeminiAPI(apiKey, model, messages, temperature = 0.7, maxTokens = 8000, stream = false) {
   console.log(`[DEBUG] callGeminiAPI 参数:`);
   console.log(`  - 模型: ${model}`);
   console.log(`  - 消息数量: ${messages.length}`);
   console.log(`  - 温度: ${temperature}`);
   console.log(`  - 最大令牌: ${maxTokens}`);
   console.log(`  - 流模式: ${stream}`);
-  console.log(`  - API Key 存在: ${!!GEMINI_API_KEY}`);
+  console.log(`  - API Key 存在: ${!!apiKey}`);
   
-  if (!GEMINI_API_KEY) {
-    console.error(`[ERROR] 未设置 GEMINI_API_KEY 环境变量`);
-    throw new Error('未设置 GEMINI_API_KEY 环境变量');
+  if (!apiKey) {
+    console.error(`[ERROR] 未提供 GEMINI_API_KEY`);
+    throw new Error('请在 Authorization header 中提供 Gemini API Key: Bearer YOUR_API_KEY');
   }
 
   try {
@@ -102,7 +65,7 @@ async function callGeminiAPI(model, messages, temperature = 0.7, maxTokens = 800
     const baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai/';
     
     const openai = new OpenAI({
-      apiKey: GEMINI_API_KEY,
+      apiKey: apiKey,
       baseURL: baseURL
     });
 
@@ -159,7 +122,7 @@ async function callGeminiAPI(model, messages, temperature = 0.7, maxTokens = 800
 }
 
 // 处理聊天完成请求（支持流式响应）
-async function handleChatCompletions(body) {
+async function handleChatCompletions(headers, body) {
   console.log(`[DEBUG] handleChatCompletions 开始处理`);
   console.log(`[DEBUG] 请求体长度: ${body.length}`);
   
@@ -190,9 +153,15 @@ async function handleChatCompletions(body) {
       throw new Error('messages 参数必须是非空数组');
     }
 
+    // 获取 API Key
+    const apiKey = getApiKey(headers);
+    if (!apiKey) {
+      throw new Error('请在 Authorization header 中提供 Gemini API Key: Bearer YOUR_API_KEY');
+    }
+
     console.log(`[INFO] 处理聊天完成请求，模型: ${model}, 消息数量: ${messages.length}, 流模式: ${stream}`);
 
-    const result = await callGeminiAPI(model, messages, temperature, max_tokens, stream);
+    const result = await callGeminiAPI(apiKey, model, messages, temperature, max_tokens, stream);
     
     if (stream) {
       // 流式响应处理
@@ -324,15 +293,15 @@ function handleHealth() {
     body: JSON.stringify({
       status: 'ok',
       timestamp: new Date().toISOString(),
-      message: 'gemini 代理运行正常',
+      message: 'Gemini 代理运行正常',
       service: 'gemini-proxy',
       version: '1.0.0',
       models: SUPPORTED_MODELS.length,
-      auth_enabled: !!process.env.AUTH_TOKEN,
+      usage: '请在 Authorization header 中提供 Gemini API Key: Bearer YOUR_API_KEY',
       features: {
         streaming: true,
         cors: true,
-        auth: !!process.env.AUTH_TOKEN
+        flexible_auth: true
       }
     })
   };
@@ -393,32 +362,6 @@ export const handler = async (event, context) => {
       };
     }
 
-    // 身份验证（仅对需要认证的路径）
-    const requiresAuth = path !== '/health' && path !== '/';
-    
-    if (requiresAuth) {
-      console.log(`[DEBUG] 开始身份验证检查`);
-      const authResult = verifyAuthorization(headers);
-      
-      if (!authResult.authorized) {
-        console.log(`[ERROR] 身份验证失败`);
-        return {
-          statusCode: authResult.error.statusCode,
-          headers: {
-            'Content-Type': 'application/json',
-            'Access-Control-Allow-Origin': '*'
-          },
-          body: JSON.stringify({
-            error: {
-              message: authResult.error.message,
-              type: 'unauthorized',
-              code: authResult.error.code
-            }
-          })
-        };
-      }
-    }
-
     let response;
     // 支持带 /v1 前缀和不带前缀的路径，兼容 OpenAI 客户端
     const isModelsPath = (path === '/v1/models' || path === '/models') && method === 'GET';  
@@ -426,7 +369,7 @@ export const handler = async (event, context) => {
     
     if (isChatCompletionsPath) {
       console.log(`[INFO] 路由匹配: 聊天完成接口 (${path})`);
-      response = await handleChatCompletions(body);
+      response = await handleChatCompletions(headers, body);
     } else if (isModelsPath) {
       console.log(`[INFO] 路由匹配: 模型列表接口 (${path})`);
       response = handleModels();

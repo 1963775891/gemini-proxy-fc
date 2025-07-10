@@ -19,7 +19,7 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "openai": "^4.63.0"
+    "openai": "^4.104.0"
   },
   "devDependencies": {
     "colors": "^1.4.0",
@@ -28,4 +28,4 @@
   "engines": {
     "node": ">=20.0.0"
   }
-} 
+}
