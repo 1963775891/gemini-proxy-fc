@@ -14,6 +14,13 @@ const SUPPORTED_MODELS = [
   'gemini-1.5-flash-8b'
 ];
 
+// 支持的图片生成模型
+const IMAGE_GENERATION_MODELS = [
+  'imagen-3.0-generate-001',
+  'imagen-3.0-fast-generate-001',
+  'imagen-2.0-generate-001'
+];
+
 // 验证并获取 API Key
 function getApiKey(headers) {
   // 优先从 Authorization header 获取 API Key
@@ -45,14 +52,61 @@ function formatSSEData(data) {
   return `data: ${JSON.stringify(data)}\n\n`;
 }
 
-// 调用 Gemini API（支持流式响应）
-async function callGeminiAPI(apiKey, model, messages, temperature = 0.7, maxTokens = 8000, stream = false) {
+// 转换 OpenAI 格式的消息为 Gemini 格式（处理图片）
+function convertMessagesToGeminiFormat(messages) {
+  return messages.map(message => {
+    // 如果是文本消息，直接返回
+    if (typeof message.content === 'string') {
+      return message;
+    }
+    
+    // 如果是数组格式（包含图片和文本）
+    if (Array.isArray(message.content)) {
+      // 检查是否包含图片
+      const hasImage = message.content.some(item => item.type === 'image_url');
+      
+      if (hasImage) {
+        console.log(`[WARN] 检测到图片内容，Gemini OpenAI兼容接口对图片支持有限`);
+        console.log(`[INFO] 建议使用原生Gemini API或等待OpenAI兼容性完善`);
+        
+        // 提取文本部分
+        const textParts = message.content.filter(item => item.type === 'text');
+        const textContent = textParts.map(part => part.text).join('\n');
+        
+        // 如果没有文本，提供默认提示
+        const finalContent = textContent || '用户发送了一张图片，但当前代理不支持图片处理。请告诉用户：当前使用的Gemini代理暂不支持图片分析功能。';
+        
+        return {
+          ...message,
+          content: finalContent
+        };
+      }
+      
+      // 如果没有图片，正常处理多部分文本内容
+      const textContent = message.content
+        .filter(item => item.type === 'text')
+        .map(item => item.text)
+        .join('\n');
+      
+      return {
+        ...message,
+        content: textContent
+      };
+    }
+    
+    return message;
+  });
+}
+
+// 调用 Gemini API（支持流式响应和函数调用）
+async function callGeminiAPI(apiKey, model, messages, temperature = 0.7, maxTokens = 8000, stream = false, tools = null) {
   console.log(`[DEBUG] callGeminiAPI 参数:`);
   console.log(`  - 模型: ${model}`);
   console.log(`  - 消息数量: ${messages.length}`);
   console.log(`  - 温度: ${temperature}`);
   console.log(`  - 最大令牌: ${maxTokens}`);
   console.log(`  - 流模式: ${stream}`);
+  console.log(`  - 工具函数: ${tools ? tools.length : 0}`);
   console.log(`  - API Key 存在: ${!!apiKey}`);
   
   if (!apiKey) {
@@ -80,6 +134,12 @@ async function callGeminiAPI(apiKey, model, messages, temperature = 0.7, maxToke
       max_tokens: maxTokens,
       stream: stream
     };
+    
+    // 添加工具函数支持
+    if (tools && tools.length > 0) {
+      requestParams.tools = tools;
+      console.log(`[INFO] 添加了 ${tools.length} 个工具函数`);
+    }
     
     const startTime = Date.now();
     
@@ -121,6 +181,54 @@ async function callGeminiAPI(apiKey, model, messages, temperature = 0.7, maxToke
   }
 }
 
+// 调用图片生成API
+async function callImageGenerationAPI(apiKey, model, prompt, aspectRatio = 'square', numberOfImages = 1) {
+  console.log(`[INFO] 调用图片生成API，模型: ${model}, 提示词长度: ${prompt.length}`);
+  
+  if (!apiKey) {
+    throw new Error('请在 Authorization header 中提供 Gemini API Key: Bearer YOUR_API_KEY');
+  }
+
+  try {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateImage?key=${apiKey}`;
+    
+    const requestBody = {
+      prompt: {
+        text: prompt
+      },
+      generationConfig: {
+        aspectRatio: aspectRatio,
+        numberOfImages: numberOfImages
+      }
+    };
+
+    console.log(`[DEBUG] 图片生成请求:`, JSON.stringify(requestBody, null, 2));
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(requestBody)
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`[ERROR] 图片生成API调用失败: ${response.status} ${response.statusText}`);
+      console.error(`[ERROR] 错误详情: ${errorText}`);
+      throw new Error(`图片生成失败: ${response.status} ${response.statusText}`);
+    }
+
+    const result = await response.json();
+    console.log(`[INFO] 图片生成成功`);
+    return result;
+
+  } catch (error) {
+    console.error(`[ERROR] 调用图片生成API失败:`, error);
+    throw new Error(`图片生成错误: ${error.message}`);
+  }
+}
+
 // 处理聊天完成请求（支持流式响应）
 async function handleChatCompletions(headers, body) {
   console.log(`[DEBUG] handleChatCompletions 开始处理`);
@@ -138,7 +246,8 @@ async function handleChatCompletions(headers, body) {
       messages = [],
       temperature = 0.7,
       max_tokens = 8000,
-      stream = false
+      stream = false,
+      tools = null
     } = requestData;
 
     // 验证模型是否支持
@@ -161,7 +270,11 @@ async function handleChatCompletions(headers, body) {
 
     console.log(`[INFO] 处理聊天完成请求，模型: ${model}, 消息数量: ${messages.length}, 流模式: ${stream}`);
 
-    const result = await callGeminiAPI(apiKey, model, messages, temperature, max_tokens, stream);
+    // 转换消息格式以支持图片
+    const convertedMessages = convertMessagesToGeminiFormat(messages);
+    console.log(`[DEBUG] 转换后的消息:`, JSON.stringify(convertedMessages, null, 2));
+
+    const result = await callGeminiAPI(apiKey, model, convertedMessages, temperature, max_tokens, stream, tools);
     
     if (stream) {
       // 流式响应处理
@@ -248,11 +361,109 @@ async function handleChatCompletions(headers, body) {
   }
 }
 
+// 处理图片生成请求
+async function handleImageGeneration(headers, body) {
+  console.log(`[INFO] 开始处理图片生成请求`);
+  
+  try {
+    if (!body || body.trim() === '') {
+      throw new Error('请求体为空');
+    }
+    
+    const requestData = JSON.parse(body);
+    
+    const {
+      model = 'imagen-3.0-generate-001',
+      prompt,
+      size = '1024x1024',
+      n = 1
+    } = requestData;
+
+    // 验证模型是否支持
+    if (!IMAGE_GENERATION_MODELS.includes(model)) {
+      console.error(`[ERROR] 不支持的图片生成模型: ${model}, 支持的模型: ${IMAGE_GENERATION_MODELS.join(', ')}`);
+      throw new Error(`不支持的图片生成模型: ${model}`);
+    }
+
+    // 验证提示词
+    if (!prompt || typeof prompt !== 'string' || prompt.trim() === '') {
+      throw new Error('prompt 参数必须是非空字符串');
+    }
+
+    // 获取 API Key
+    const apiKey = getApiKey(headers);
+    if (!apiKey) {
+      throw new Error('请在 Authorization header 中提供 Gemini API Key: Bearer YOUR_API_KEY');
+    }
+
+    // 转换size参数为aspectRatio
+    let aspectRatio = 'square';
+    if (size === '1024x1792' || size === '512x896') {
+      aspectRatio = 'portrait';
+    } else if (size === '1792x1024' || size === '896x512') {
+      aspectRatio = 'landscape';
+    }
+
+    console.log(`[INFO] 处理图片生成请求，模型: ${model}, 提示词: ${prompt.substring(0, 100)}...`);
+
+    const result = await callImageGenerationAPI(apiKey, model, prompt, aspectRatio, n);
+    
+    // 转换为OpenAI兼容格式
+    const openaiResponse = {
+      created: Math.floor(Date.now() / 1000),
+      data: []
+    };
+
+    if (result.generatedImages) {
+      result.generatedImages.forEach((image, index) => {
+        openaiResponse.data.push({
+          url: `data:image/jpeg;base64,${image.bytesBase64Encoded}`,
+          revised_prompt: prompt
+        });
+      });
+    }
+
+    const response = {
+      statusCode: 200,
+      headers: {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization'
+      },
+      body: JSON.stringify(openaiResponse)
+    };
+    
+    console.log(`[INFO] 图片生成请求处理成功，生成了 ${openaiResponse.data.length} 张图片`);
+    return response;
+    
+  } catch (error) {
+    console.error(`[ERROR] 处理图片生成请求失败:`, error);
+    
+    const errorResponse = {
+      statusCode: 500,
+      headers: {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*'
+      },
+      body: JSON.stringify({
+        error: {
+          message: error.message,
+          type: 'internal_error',
+          code: 'image_generation_error'
+        }
+      })
+    };
+    
+    return errorResponse;
+  }
+}
+
 // 处理模型列表请求
 function handleModels() {
   console.log(`[INFO] 处理模型列表请求`);
   
-  const models = SUPPORTED_MODELS.map(model => ({
+  const chatModels = SUPPORTED_MODELS.map(model => ({
     id: model,
     object: 'model',
     created: Math.floor(Date.now() / 1000),
@@ -261,6 +472,18 @@ function handleModels() {
     root: model,
     parent: null
   }));
+
+  const imageModels = IMAGE_GENERATION_MODELS.map(model => ({
+    id: model,
+    object: 'model',
+    created: Math.floor(Date.now() / 1000),
+    owned_by: 'google',
+    permission: [],
+    root: model,
+    parent: null
+  }));
+
+  const allModels = [...chatModels, ...imageModels];
 
   const response = {
     statusCode: 200,
@@ -272,11 +495,11 @@ function handleModels() {
     },
     body: JSON.stringify({
       object: 'list',
-      data: models
+      data: allModels
     })
   };
   
-  console.log(`[INFO] 模型列表请求处理成功，返回 ${models.length} 个模型`);
+  console.log(`[INFO] 模型列表请求处理成功，返回 ${allModels.length} 个模型`);
   return response;
 }
 
@@ -296,12 +519,14 @@ function handleHealth() {
       message: 'Gemini 代理运行正常',
       service: 'gemini-proxy',
       version: '1.0.0',
-      models: SUPPORTED_MODELS.length,
+      models: SUPPORTED_MODELS.length + IMAGE_GENERATION_MODELS.length,
       usage: '请在 Authorization header 中提供 Gemini API Key: Bearer YOUR_API_KEY',
       features: {
         streaming: true,
         cors: true,
-        flexible_auth: true
+        flexible_auth: true,
+        function_calling: true,
+        image_generation: true
       }
     })
   };
@@ -366,10 +591,14 @@ export const handler = async (event, context) => {
     // 支持带 /v1 前缀和不带前缀的路径，兼容 OpenAI 客户端
     const isModelsPath = (path === '/v1/models' || path === '/models') && method === 'GET';  
     const isChatCompletionsPath = (path === '/v1/chat/completions' || path === '/chat/completions') && method === 'POST';
+    const isImageGenerationPath = (path === '/v1/images/generations' || path === '/images/generations') && method === 'POST';
     
     if (isChatCompletionsPath) {
       console.log(`[INFO] 路由匹配: 聊天完成接口 (${path})`);
       response = await handleChatCompletions(headers, body);
+    } else if (isImageGenerationPath) {
+      console.log(`[INFO] 路由匹配: 图片生成接口 (${path})`);
+      response = await handleImageGeneration(headers, body);
     } else if (isModelsPath) {
       console.log(`[INFO] 路由匹配: 模型列表接口 (${path})`);
       response = handleModels();
