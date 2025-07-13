@@ -69,13 +69,7 @@ async function downloadImageAsBase64(url) {
     // 获取Content-Type，如果没有则根据URL猜测
     let mimeType = response.headers.get('content-type');
     if (!mimeType) {
-      if (url.toLowerCase().includes('.png')) {
-        mimeType = 'image/png';
-      } else if (url.toLowerCase().includes('.webp')) {
-        mimeType = 'image/webp';
-      } else {
-        mimeType = 'image/jpeg'; // 默认
-      }
+      mimeType = getMimeTypeFromUrl(url);
     }
     
     console.log(`[INFO] 图片下载成功，大小: ${buffer.length} bytes, MIME类型: ${mimeType}`);
@@ -83,6 +77,22 @@ async function downloadImageAsBase64(url) {
   } catch (error) {
     console.error(`[ERROR] 下载图片失败: ${error.message}`);
     throw new Error(`无法下载图片 ${url}: ${error.message}`);
+  }
+}
+
+// 获取图片MIME类型
+function getMimeTypeFromUrl(url) {
+  const lowercaseUrl = url.toLowerCase();
+  if (lowercaseUrl.includes('.png')) {
+    return 'image/png';
+  } else if (lowercaseUrl.includes('.webp')) {
+    return 'image/webp';
+  } else if (lowercaseUrl.includes('.heic')) {
+    return 'image/heic';
+  } else if (lowercaseUrl.includes('.heif')) {
+    return 'image/heif';
+  } else {
+    return 'image/jpeg'; // 默认
   }
 }
 
@@ -125,7 +135,7 @@ async function convertMessagesToGeminiFormat(messages) {
       const hasImage = message.content.some(item => item.type === 'image_url');
       
       if (hasImage) {
-        console.log(`[INFO] 检测到图片内容，正在处理图片数据`);
+        console.log(`[INFO] 检测到图片内容，转换为Gemini格式`);
         
         // 分别处理文本和图片部分
         const parts = [];
@@ -134,32 +144,34 @@ async function convertMessagesToGeminiFormat(messages) {
           if (item.type === 'text') {
             parts.push({ text: item.text });
           } else if (item.type === 'image_url') {
+            const imageUrl = item.image_url.url;
+            
             try {
-              const imageUrl = item.image_url.url;
-              let imageData;
-              
               if (imageUrl.startsWith('http://') || imageUrl.startsWith('https://')) {
-                // 处理URL图片
+                // URL图片：下载并转换为base64使用inline_data格式
                 console.log(`[INFO] 处理URL图片: ${imageUrl.substring(0, 50)}...`);
-                imageData = await downloadImageAsBase64(imageUrl);
+                const imageData = await downloadImageAsBase64(imageUrl);
+                parts.push({
+                  inline_data: {
+                    mime_type: imageData.mimeType,
+                    data: imageData.base64
+                  }
+                });
               } else {
-                // 处理base64图片
+                // Base64图片使用inline_data格式
                 console.log(`[INFO] 处理base64图片数据`);
-                imageData = processBase64Image(imageUrl);
+                const imageData = processBase64Image(imageUrl);
+                parts.push({
+                  inline_data: {
+                    mime_type: imageData.mimeType,
+                    data: imageData.base64
+                  }
+                });
               }
               
-              // 添加图片part
-              parts.push({
-                inline_data: {
-                  mime_type: imageData.mimeType,
-                  data: imageData.base64
-                }
-              });
-              
-              console.log(`[INFO] 成功处理图片，MIME类型: ${imageData.mimeType}`);
+              console.log(`[INFO] 成功处理图片，MIME类型: ${parts[parts.length-1].inline_data.mime_type}`);
             } catch (error) {
               console.error(`[ERROR] 处理图片失败: ${error.message}`);
-              // 如果图片处理失败，添加错误提示文本
               parts.push({ 
                 text: `[图片处理失败: ${error.message}]`
               });
@@ -209,7 +221,7 @@ async function callGeminiAPI(apiKey, model, messages, temperature = 0.7, maxToke
     throw new Error('请在 Authorization header 中提供 Gemini API Key: Bearer YOUR_API_KEY');
   }
 
-  // 检查是否包含图片内容
+  // 检查是否包含图片内容（检测转换后的格式）
   const hasImages = messages.some(message => 
     Array.isArray(message.content) && 
     message.content.some(part => part.inline_data)
@@ -217,8 +229,9 @@ async function callGeminiAPI(apiKey, model, messages, temperature = 0.7, maxToke
 
   try {
     if (hasImages) {
-      console.log(`[INFO] 检测到图片内容，使用原生Gemini API`);
-      return await callNativeGeminiAPI(apiKey, model, messages, temperature, maxTokens, stream);
+      console.log(`[INFO] 检测到图片内容，使用原生Gemini API（禁用流式）`);
+      // 原生API不支持流式响应，强制禁用
+      return await callNativeGeminiAPI(apiKey, model, messages, temperature, maxTokens, false, tools);
     } else {
       console.log(`[INFO] 纯文本内容，使用OpenAI兼容API`);
       return await callOpenAICompatibleAPI(apiKey, model, messages, temperature, maxTokens, stream, tools);
@@ -249,16 +262,63 @@ async function callGeminiAPI(apiKey, model, messages, temperature = 0.7, maxToke
 }
 
 // 调用原生Gemini API（支持图片）
-async function callNativeGeminiAPI(apiKey, model, messages, temperature = 0.7, maxTokens = 8000, stream = false) {
+async function callNativeGeminiAPI(apiKey, model, messages, temperature = 0.7, maxTokens = 8000, stream = false, tools = null) {
   console.log(`[INFO] 使用原生Gemini API处理包含图片的请求`);
   
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
   
-  // 转换为原生API格式
-  const contents = messages.map(message => ({
-    role: message.role === 'assistant' ? 'model' : 'user',
-    parts: Array.isArray(message.content) ? message.content : [{ text: message.content }]
-  }));
+  // 转换为原生API格式 - 正确处理系统提示词
+  const contents = [];
+  let systemPrompt = '';
+  
+  // 先提取系统提示词
+  for (const message of messages) {
+    if (message.role === 'system') {
+      systemPrompt = typeof message.content === 'string' ? message.content : 
+                     Array.isArray(message.content) ? message.content.map(part => part.text || '').join('\n') : '';
+    }
+  }
+  
+  // 处理非系统消息，将系统提示词合并到第一个用户消息
+  let firstUserMessageProcessed = false;
+  for (const message of messages) {
+    if (message.role === 'system') {
+      continue; // 跳过系统消息，已经提取
+    }
+    
+    const role = message.role === 'assistant' ? 'model' : 'user';
+    let parts = Array.isArray(message.content) ? message.content : [{ text: message.content }];
+    
+    // 如果是第一个用户消息且有系统提示词，则合并
+    if (role === 'user' && !firstUserMessageProcessed && systemPrompt) {
+      // 将系统提示词添加到第一个用户消息的开头
+      const systemPart = { text: systemPrompt + '\n\n' };
+      if (Array.isArray(message.content)) {
+        // 如果是多部分内容（包含图片），在文本部分前添加系统提示词
+        const textParts = parts.filter(part => part.text);
+        const otherParts = parts.filter(part => !part.text);
+        if (textParts.length > 0) {
+          textParts[0].text = systemPrompt + '\n\n' + textParts[0].text;
+          parts = [...textParts, ...otherParts];
+        } else {
+          parts = [systemPart, ...parts];
+        }
+      } else {
+        parts = [{ text: systemPrompt + '\n\n' + message.content }];
+      }
+      firstUserMessageProcessed = true;
+    }
+    
+    contents.push({ role, parts });
+  }
+  
+  // 如果没有用户消息但有系统提示词，创建一个包含系统提示词的用户消息
+  if (systemPrompt && contents.length === 0) {
+    contents.push({
+      role: 'user',
+      parts: [{ text: systemPrompt }]
+    });
+  }
   
   const requestBody = {
     contents: contents,
@@ -267,6 +327,19 @@ async function callNativeGeminiAPI(apiKey, model, messages, temperature = 0.7, m
       maxOutputTokens: maxTokens
     }
   };
+  
+  // 添加工具函数支持（原生API格式）
+  if (tools && tools.length > 0) {
+    // 转换OpenAI格式的tools为原生API格式
+    const nativeTools = tools.map(tool => ({
+      function_declarations: tool.function ? [tool.function] : tool.function_declarations || []
+    })).filter(tool => tool.function_declarations.length > 0);
+    
+    if (nativeTools.length > 0) {
+      requestBody.tools = nativeTools;
+      console.log(`[INFO] 原生API添加了 ${nativeTools.length} 个工具`);
+    }
+  }
   
   console.log(`[DEBUG] 原生API请求体:`, JSON.stringify(requestBody, null, 2));
   
@@ -294,12 +367,29 @@ async function callNativeGeminiAPI(apiKey, model, messages, temperature = 0.7, m
     const candidate = result.candidates[0];
     const content = candidate.content;
     
+    // 检查是否有函数调用
+    const functionCalls = [];
     let textContent = '';
+    
     if (content.parts) {
-      textContent = content.parts.map(part => part.text || '').join('');
+      for (const part of content.parts) {
+        if (part.functionCall) {
+          // 原生API的函数调用格式转换为OpenAI格式
+          functionCalls.push({
+            id: `call_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            type: 'function',
+            function: {
+              name: part.functionCall.name,
+              arguments: JSON.stringify(part.functionCall.args || {})
+            }
+          });
+        } else if (part.text) {
+          textContent += part.text;
+        }
+      }
     }
     
-    return {
+    const response = {
       id: `chatcmpl-${Date.now()}`,
       object: 'chat.completion',
       created: Math.floor(Date.now() / 1000),
@@ -308,7 +398,7 @@ async function callNativeGeminiAPI(apiKey, model, messages, temperature = 0.7, m
         index: 0,
         message: {
           role: 'assistant',
-          content: textContent
+          content: textContent || null
         },
         finish_reason: candidate.finishReason === 'STOP' ? 'stop' : 'length'
       }],
@@ -318,6 +408,15 @@ async function callNativeGeminiAPI(apiKey, model, messages, temperature = 0.7, m
         total_tokens: 0
       }
     };
+    
+    // 如果有函数调用，添加到消息中
+    if (functionCalls.length > 0) {
+      response.choices[0].message.tool_calls = functionCalls;
+      response.choices[0].finish_reason = 'tool_calls';
+      console.log(`[INFO] 原生API返回了 ${functionCalls.length} 个函数调用`);
+    }
+    
+    return response;
   } else {
     throw new Error('API返回了空的候选结果');
   }
@@ -470,12 +569,44 @@ async function handleChatCompletions(headers, body) {
       let chunkCount = 0;
       
       try {
-        for await (const chunk of result) {
-          chunkCount++;
-          console.log(`[DEBUG] 收到流式数据块 ${chunkCount}:`, JSON.stringify(chunk, null, 2));
-          
-          // 格式化为 SSE 数据
-          sseData += formatSSEData(chunk);
+        // 检查result是否是异步可迭代对象
+        if (result && typeof result[Symbol.asyncIterator] === 'function') {
+          for await (const chunk of result) {
+            chunkCount++;
+            console.log(`[DEBUG] 收到流式数据块 ${chunkCount}:`, JSON.stringify(chunk, null, 2));
+            
+            // 格式化为 SSE 数据
+            sseData += formatSSEData(chunk);
+          }
+        } else {
+          console.log(`[WARN] result 不是异步可迭代对象，将完整响应转换为流式格式`);
+          // 将完整响应转换为流式数据块格式
+          if (result && result.choices && result.choices.length > 0) {
+            const choice = result.choices[0];
+            const content = choice.message?.content || '';
+            
+            // 转换为流式数据块格式
+            const streamChunk = {
+              id: result.id || `chatcmpl-${Date.now()}`,
+              object: 'chat.completion.chunk',
+              created: result.created || Math.floor(Date.now() / 1000),
+              model: result.model,
+              choices: [{
+                index: 0,
+                delta: {
+                  role: 'assistant',
+                  content: content
+                },
+                finish_reason: null
+              }]
+            };
+            
+            sseData += formatSSEData(streamChunk);
+            chunkCount = 1;
+            console.log(`[DEBUG] 转换完整响应为流式块:`, JSON.stringify(streamChunk, null, 2));
+          } else {
+            console.log(`[ERROR] 无效的响应格式:`, JSON.stringify(result, null, 2));
+          }
         }
         
         // 添加结束标记
